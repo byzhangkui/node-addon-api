@@ -36,11 +36,13 @@ static_assert(sizeof(char16_t) == sizeof(wchar_t), "Size mismatch between char16
 
 // VS2013 does not support noexcept
 #if defined(_MSC_VER) && _MSC_VER <= 1800
-#define _NOEXCEPT
+#define NOEXCEPT
+#else
+#define NAPI_USE_INITIALIZER_LIST
 #endif
 
-#ifdef _NOEXCEPT
-  #define NAPI_NOEXCEPT _NOEXCEPT
+#ifdef NOEXCEPT
+  #define NAPI_NOEXCEPT 
 #else
   #define NAPI_NOEXCEPT noexcept
 #endif
@@ -1056,7 +1058,9 @@ namespace Napi {
 
     Value operator ()(const std::initializer_list<napi_value>& args) const;
 
+#ifdef NAPI_USE_INITIALIZER_LIST
     Value Call(const std::initializer_list<napi_value>& args) const;
+#endif
     Value Call(const std::vector<napi_value>& args) const;
     Value Call(size_t argc, const napi_value* args) const;
     Value Call(napi_value recv, const std::initializer_list<napi_value>& args) const;
@@ -1237,9 +1241,13 @@ namespace Napi {
 
     Napi::Value operator ()(const std::initializer_list<napi_value>& args) const;
 
+#ifdef NAPI_USE_INITIALIZER_LIST
     Napi::Value Call(const std::initializer_list<napi_value>& args) const;
+#endif
     Napi::Value Call(const std::vector<napi_value>& args) const;
+#ifdef NAPI_USE_INITIALIZER_LIST
     Napi::Value Call(napi_value recv, const std::initializer_list<napi_value>& args) const;
+#endif
     Napi::Value Call(napi_value recv, const std::vector<napi_value>& args) const;
     Napi::Value Call(napi_value recv, size_t argc, const napi_value* args) const;
 
@@ -1695,20 +1703,52 @@ namespace Napi {
                                              void* data = nullptr);
     template <InstanceVoidMethodCallback method>
     static PropertyDescriptor InstanceMethod(const char* utf8name,
-                                             napi_property_attributes attributes = napi_default,
-                                             void* data = nullptr);
+      napi_property_attributes attributes = napi_default,
+      void* data = nullptr) {
+      napi_property_descriptor desc = napi_property_descriptor();
+      desc.utf8name = utf8name;
+      desc.method = details::TemplatedInstanceVoidCallback<T, method>;
+      desc.data = data;
+      desc.attributes = attributes;
+      return desc;
+    }
+
     template <InstanceMethodCallback method>
     static PropertyDescriptor InstanceMethod(const char* utf8name,
-                                             napi_property_attributes attributes = napi_default,
-                                             void* data = nullptr);
+      napi_property_attributes attributes = napi_default,
+      void* data = nullptr) {
+      napi_property_descriptor desc = napi_property_descriptor();
+      desc.utf8name = utf8name;
+      desc.method = details::TemplatedInstanceCallback<T, method>;
+      desc.data = data;
+      desc.attributes = attributes;
+      return desc;
+    }
+
     template <InstanceVoidMethodCallback method>
     static PropertyDescriptor InstanceMethod(Symbol name,
-                                             napi_property_attributes attributes = napi_default,
-                                             void* data = nullptr);
+      napi_property_attributes attributes = napi_default,
+      void* data = nullptr) {
+      napi_property_descriptor desc = napi_property_descriptor();
+      desc.name = name;
+      desc.method = details::TemplatedInstanceVoidCallback<T, method>;
+      desc.data = data;
+      desc.attributes = attributes;
+      return desc;
+    }
+
     template <InstanceMethodCallback method>
     static PropertyDescriptor InstanceMethod(Symbol name,
-                                             napi_property_attributes attributes = napi_default,
-                                             void* data = nullptr);
+      napi_property_attributes attributes = napi_default,
+      void* data = nullptr) {
+      napi_property_descriptor desc = napi_property_descriptor();
+      desc.name = name;
+      desc.method = details::TemplatedInstanceCallback<T, method>;
+      desc.data = data;
+      desc.attributes = attributes;
+      return desc;
+    }
+
     static PropertyDescriptor InstanceAccessor(const char* utf8name,
                                                InstanceGetterCallback getter,
                                                InstanceSetterCallback setter,
@@ -1721,12 +1761,31 @@ namespace Napi {
                                                void* data = nullptr);
     template <InstanceGetterCallback getter, InstanceSetterCallback setter=nullptr>
     static PropertyDescriptor InstanceAccessor(const char* utf8name,
-                                               napi_property_attributes attributes = napi_default,
-                                               void* data = nullptr);
+      napi_property_attributes attributes = napi_default,
+      void* data = nullptr) {
+      napi_property_descriptor desc = napi_property_descriptor();
+      desc.utf8name = utf8name;
+      desc.getter = details::TemplatedInstanceCallback<T, getter>;
+      desc.setter = This::WrapSetter(This::SetterTag<setter>());
+      desc.data = data;
+      desc.attributes = attributes;
+      return desc;
+    }
+
+
     template <InstanceGetterCallback getter, InstanceSetterCallback setter=nullptr>
     static PropertyDescriptor InstanceAccessor(Symbol name,
-                                               napi_property_attributes attributes = napi_default,
-                                               void* data = nullptr);
+      napi_property_attributes attributes = napi_default,
+      void* data = nullptr) {
+      napi_property_descriptor desc = napi_property_descriptor();
+      desc.name = name;
+      desc.getter = details::TemplatedInstanceCallback<T, getter>;
+      desc.setter = This::WrapSetter(This::SetterTag<setter>());
+      desc.data = data;
+      desc.attributes = attributes;
+      return desc;
+    }
+
     static PropertyDescriptor InstanceValue(const char* utf8name,
                                             Napi::Value value,
                                             napi_property_attributes attributes = napi_default);
@@ -1753,7 +1812,14 @@ namespace Napi {
 
     template <InstanceSetterCallback method>
     static napi_value WrappedMethod(napi_env env,
-                                    napi_callback_info info) NAPI_NOEXCEPT;
+      napi_callback_info info) NAPI_NOEXCEPT{
+      return details::WrapCallback([&] {
+        const CallbackInfo cbInfo(env, info);
+        T* instance = T::Unwrap(cbInfo.This().As<Object>());
+        (instance->*method)(cbInfo, cbInfo[0]);
+        return nullptr;
+      });
+    }
 
     template <InstanceSetterCallback setter> struct SetterTag {};
 
@@ -1761,6 +1827,7 @@ namespace Napi {
     static napi_callback WrapSetter(SetterTag<setter>) NAPI_NOEXCEPT {
       return &This::WrappedMethod<setter>;
     }
+
     static napi_callback WrapSetter(SetterTag<nullptr>) NAPI_NOEXCEPT {
       return nullptr;
     }
@@ -1833,20 +1900,52 @@ namespace Napi {
                                            void* data = nullptr);
     template <StaticVoidMethodCallback method>
     static PropertyDescriptor StaticMethod(const char* utf8name,
-                                           napi_property_attributes attributes = napi_default,
-                                           void* data = nullptr);
+      napi_property_attributes attributes = napi_default,
+      void* data = nullptr) {
+      napi_property_descriptor desc = napi_property_descriptor();
+      desc.utf8name = utf8name;
+      desc.method = details::TemplatedVoidCallback<method>;
+      desc.data = data;
+      desc.attributes = static_cast<napi_property_attributes>(attributes | napi_static);
+      return desc;
+    }
+
     template <StaticVoidMethodCallback method>
     static PropertyDescriptor StaticMethod(Symbol name,
-                                           napi_property_attributes attributes = napi_default,
-                                           void* data = nullptr);
+      napi_property_attributes attributes = napi_default,
+      void* data = nullptr) {
+      napi_property_descriptor desc = napi_property_descriptor();
+      desc.name = name;
+      desc.method = details::TemplatedVoidCallback<method>;
+      desc.data = data;
+      desc.attributes = static_cast<napi_property_attributes>(attributes | napi_static);
+      return desc;
+    }
+
     template <StaticMethodCallback method>
     static PropertyDescriptor StaticMethod(const char* utf8name,
-                                           napi_property_attributes attributes = napi_default,
-                                           void* data = nullptr);
+      napi_property_attributes attributes = napi_default,
+      void* data = nullptr) {
+      napi_property_descriptor desc = napi_property_descriptor();
+      desc.utf8name = utf8name;
+      desc.method = details::TemplatedCallback<method>;
+      desc.data = data;
+      desc.attributes = static_cast<napi_property_attributes>(attributes | napi_static);
+      return desc;
+    }
+
     template <StaticMethodCallback method>
     static PropertyDescriptor StaticMethod(Symbol name,
-                                           napi_property_attributes attributes = napi_default,
-                                           void* data = nullptr);
+      napi_property_attributes attributes = napi_default,
+      void* data = nullptr) {
+      napi_property_descriptor desc = napi_property_descriptor();
+      desc.name = name;
+      desc.method = details::TemplatedCallback<method>;
+      desc.data = data;
+      desc.attributes = static_cast<napi_property_attributes>(attributes | napi_static);
+      return desc;
+    }
+
     static PropertyDescriptor StaticAccessor(const char* utf8name,
                                              StaticGetterCallback getter,
                                              StaticSetterCallback setter,
@@ -1859,12 +1958,30 @@ namespace Napi {
                                              void* data = nullptr);
     template <StaticGetterCallback getter, StaticSetterCallback setter=nullptr>
     static PropertyDescriptor StaticAccessor(const char* utf8name,
-                                             napi_property_attributes attributes = napi_default,
-                                             void* data = nullptr);
+      napi_property_attributes attributes = napi_default,
+      void* data = nullptr) {
+      napi_property_descriptor desc = napi_property_descriptor();
+      desc.utf8name = utf8name;
+      desc.getter = details::TemplatedCallback<getter>;
+      desc.setter = This::WrapStaticSetter(This::StaticSetterTag<setter>());
+      desc.data = data;
+      desc.attributes = static_cast<napi_property_attributes>(attributes | napi_static);
+      return desc;
+    }
+
     template <StaticGetterCallback getter, StaticSetterCallback setter=nullptr>
     static PropertyDescriptor StaticAccessor(Symbol name,
-                                             napi_property_attributes attributes = napi_default,
-                                             void* data = nullptr);
+      napi_property_attributes attributes = napi_default,
+      void* data = nullptr) {
+      napi_property_descriptor desc = napi_property_descriptor();
+      desc.name = name;
+      desc.getter = details::TemplatedCallback<getter>;
+      desc.setter = This::WrapStaticSetter(This::StaticSetterTag<setter>());
+      desc.data = data;
+      desc.attributes = static_cast<napi_property_attributes>(attributes | napi_static);
+      return desc;
+    }
+
     static PropertyDescriptor StaticValue(const char* utf8name,
                                           Napi::Value value,
                                           napi_property_attributes attributes = napi_default);
@@ -1897,7 +2014,13 @@ namespace Napi {
 
     template <StaticSetterCallback method>
     static napi_value WrappedMethod(napi_env env,
-                                    napi_callback_info info) NAPI_NOEXCEPT;
+      napi_callback_info info) NAPI_NOEXCEPT{
+      return details::WrapCallback([&] {
+        const CallbackInfo cbInfo(env, info);
+        method(cbInfo, cbInfo[0]);
+        return nullptr;
+      });
+    }
 
     template <StaticSetterCallback setter> struct StaticSetterTag {};
 
